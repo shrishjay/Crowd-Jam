@@ -1,0 +1,7 @@
+{
+  "name": "crowd-jam",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": { "start": "node server.js", "test": "node --test test/music.test.js" },
+  "dependencies": { "qrcode": "^1.5.4", "ws": "^8.18.0" }
+}

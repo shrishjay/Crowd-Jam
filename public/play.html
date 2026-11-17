@@ -1,0 +1,44 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Crowd Jam</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #111; color: #fff; font: 600 20px system-ui; overscroll-behavior: none; touch-action: none; user-select: none; }
+  #pad { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; transition: background .15s; }
+  #role { font-size: 44px; } #msg { opacity: .8; margin-top: 8px; font-weight: 400; }
+  .dot { position: fixed; width: 90px; height: 90px; margin: -45px; border-radius: 50%; background: #fff; opacity: .5; animation: p .4s forwards; pointer-events: none; }
+  @keyframes p { to { transform: scale(2.2); opacity: 0; } }
+</style>
+<div id="pad"><div id="role">...</div><div id="msg">connecting</div></div>
+<script>
+const INFO = { lead: ['Melody', '#ff4d6d'], bass: ['Bass', '#4d96ff'], pad: ['Chords', '#9b5de5'], arp: ['Sparkle', '#e0a800'], drums: ['Drums', '#17a673'] };
+const pad = document.getElementById('pad'), role = document.getElementById('role'), msg = document.getElementById('msg');
+const room = new URLSearchParams(location.search).get('room');
+let ws, phase = 'wait', lastSend = 0;
+
+function show() {
+  msg.textContent = phase === 'play' ? 'Tap and slide anywhere! Left/right = low/high' : phase === 'done' ? 'Listen - this is what you made together' : 'Waiting for the host to start...';
+}
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws?room=${room}&as=player`);
+  ws.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+    if (d.t === 'hello') { const [name, color] = INFO[d.role]; role.textContent = name; pad.style.background = color; phase = d.phase; }
+    if (d.t === 'phase') phase = d.v;
+    show();
+  };
+  ws.onclose = () => setTimeout(connect, 1000);
+}
+function hit(e) {
+  if (phase !== 'play' || ws.readyState !== 1 || performance.now() - lastSend < 60) return;
+  lastSend = performance.now();
+  ws.send(JSON.stringify({ x: e.clientX / innerWidth, y: e.clientY / innerHeight }));
+  navigator.vibrate && navigator.vibrate(8);
+  const d = document.createElement('div'); d.className = 'dot'; d.style.left = e.clientX + 'px'; d.style.top = e.clientY + 'px';
+  document.body.appendChild(d); setTimeout(() => d.remove(), 400);
+}
+pad.addEventListener('pointerdown', hit);
+pad.addEventListener('pointermove', (e) => e.buttons && hit(e));
+connect();
+</script>
