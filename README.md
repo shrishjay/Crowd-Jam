@@ -1,22 +1,35 @@
-# Crowd Jam
+# CrowdSynth
 
-Everyone in the room scans a QR code, gets an instrument, and taps. A "conductor" turns the chaos into one piece of music that plays from the host screen.
+A crowd-powered generative orchestra. Phones send gestures; a deterministic music engine turns them into music in one key, on one grid; the host plays it and exports a WAV. Implements `PROJECT_BLUEPRINT.md`.
 
 ```
-npm install && npm start     # open http://localhost:3000 on the laptop connected to the speakers, click Start
-npm test                     # music-algorithm tests
+Phones (browser) --gestures--> Server (validate, rate-limit, roles, conductor) --timestamped musical events--> Host (WebAudio clock, synth, WAV export)
 ```
-Laptop and phones must be on the same Wi-Fi (conference Wi-Fi often isolates clients: use a phone hotspot). Set `BASE_URL=http://<ip>:3000` if the auto-detected IP is wrong.
 
-## Why it sounds musical (`public/music.js`)
-- **Shared grid**: taps are quantized to 16th notes at 100 BPM; each instrument only sounds on steps where it makes sense (kick on beats, snare on the backbeat).
-- **Key lock**: A minor pentatonic over Am-F-C-G. No wrong notes exist.
-- **Chord snap**: on strong beats melody notes snap to the current chord's tones. Bass plays root/fifth/octave of the current chord.
-- **Crowd consensus**: all melody phones vote; the median wins, so 30 people produce one line, louder with more voters.
-- **Leap limit**: melody can move at most 3 scale steps at a time, so it sings rather than jumps.
-- **Rate limits**: 4 taps/s per phone, max one melody note per 8th, one arp note per 16th, so a spammer can't make noise.
-- **Roles**: phones are assigned lead, bass, chords, arp or drums round-robin, so the crowd forms a band.
-- **Arc**: Intro, Groove, Peak, then an E to Am cadence with a held final chord (about 96 s). "Replay" plays back exactly what was made.
+## Run (laptop = server + host screen)
+```
+npm install
+npm start                 # prints every address; the first listed is the one phones should use
+npm test                  # 14 tests: engine, protocol, full server slice
+npm run load              # 30 simulated phones + abuse burst
+```
+1. Open `http://localhost:3000`, click **Create session** (this also unlocks audio), pick a mood, **Start**. Start works with zero phones (autonomous demo).
+2. Phones scan the QR (same Wi-Fi). Tap and hold anywhere on the big pad. Shake is optional.
+3. The piece moves Rhythm, Foundation, Melody, Finale on its own (or press **Next round**), ends with a cadence, then renders a WAV you can play and save.
 
-## Phones
-The phone client is a web page (`play.html`), so it works on Android in Chrome with nothing to install. For a real APK, wrap that URL in a WebView.
+**Phone shows nothing / cannot connect?** The QR uses the server's best LAN address, but laptops often have VPN/VMware/Hyper-V adapters. Pick the right one in the **Address** dropdown on the host page. Venue Wi-Fi often isolates devices: use a phone hotspot. On Windows allow inbound TCP 3000 (admin terminal): `netsh advfirewall firewall add rule name=CrowdSynth dir=in action=allow protocol=TCP localport=3000`.
+
+## Android host
+`android/` is a thin native shell: a WebView that loads the host page from the server and a bridge that saves the WAV to Downloads. Open the folder in Android Studio, run it on the phone, enter `http://<laptop-ip>:3000`. (Not built or tested here: no Android SDK on the dev machine.) The same host page works in desktop or Android Chrome.
+
+## What keeps it musical (server/)
+- `theory.js` scales, diatonic chords, voice leading, seeded PRNG, quantisation. Three presets (Radiant, Cinematic, Playful) with fixed progressions and V-I (or VII-i) cadences.
+- `conductor.js` four rounds with min/max duration and bar-boundary transitions; role quotas (largest-remainder, rotated per round); contextual gesture-to-intent mapping; melody voice-leading score (chord tones on beats 1 and 3, stepwise motion, leap penalty); event merging; budgets (24 events/bar, 8 pitched voices, 6 drums/beat, 2 melody and 1 bass/beat); adaptive density; autonomous fallback for missing roles; deterministic ending with a final collective hit.
+- `rooms.js` token-bucket rate limit (4 cap, 2/s, 8 per 2 s), duplicate and stale-sequence rejection, heartbeat expiry, bounded event log, pause/resume/end.
+- Phones can only send `tap / hold_start / hold_update / hold_end / shake / tilt`. Never notes, frequencies or instruments.
+
+## Layout
+`server/` backend and music engine, `public/` host page + phone page + synth/renderer, `test/`, `android/` host shell.
+
+## Honest limits
+Single in-memory room process (rooms are lost on restart). Tap-to-sound latency is about 250-450 ms by design (quantised and scheduled ahead). The host audio could not be listened to in the dev environment, so tune the mix by ear on the real speakers. Motion sensors vary by browser and are optional.

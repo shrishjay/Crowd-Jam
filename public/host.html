@@ -1,116 +1,60 @@
 <!doctype html>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Crowd Jam - Host</title>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CrowdSynth Host</title>
 <style>
-  body { margin: 0; background: #111; color: #fff; font: 18px system-ui; display: flex; gap: 40px; align-items: center; justify-content: center; min-height: 100vh; flex-wrap: wrap; padding: 20px; box-sizing: border-box; }
-  #qr svg { width: 320px; height: 320px; background: #fff; border-radius: 12px; display: block; }
-  h1 { margin: 0 0 4px; font-size: 40px; } #sec { font-size: 28px; margin: 14px 0; }
-  .roles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 14px 0; }
-  .r { padding: 12px 6px; border-radius: 10px; text-align: center; transition: transform .08s, filter .08s; filter: brightness(.6); }
-  .r.hit { transform: scale(1.12); filter: brightness(1.4); } .r b { display: block; font-size: 28px; }
-  #bar { height: 8px; background: #333; border-radius: 4px; overflow: hidden; } #bar div { height: 100%; width: 0; background: #fff; }
-  button { font: inherit; padding: 12px 28px; border: 0; border-radius: 10px; margin: 8px 8px 0 0; cursor: pointer; }
-</style>
-<div id="qr"></div>
-<div style="min-width:380px">
-  <h1>Crowd Jam</h1>
-  <div>Scan to join - room <b id="code">....</b> - <span id="count">0</span> players</div>
-  <div id="sec">Ready</div>
-  <div class="roles" id="roles"></div>
-  <div id="bar"><div></div></div>
-  <button id="go" disabled>Start</button><button id="again" hidden>Replay the piece</button>
-</div>
-<script src="music.js"></script>
-<script>
-const COLORS = { lead: '#ff4d6d', bass: '#4d96ff', pad: '#9b5de5', arp: '#e0a800', drums: '#17a673' };
-const NAMES = { lead: 'Melody', bass: 'Bass', pad: 'Chords', arp: 'Sparkle', drums: 'Drums' };
-const STEP = 60 / Music.BPM / 4, $ = (id) => document.getElementById(id);
-const counts = {}, boxes = {};
-for (const r in COLORS) { counts[r] = 0; $('roles').insertAdjacentHTML('beforeend', `<div class="r" id="r-${r}" style="background:${COLORS[r]}"><b>0</b>${NAMES[r]}</div>`); boxes[r] = $('r-' + r); }
-
-let ws, ctx, master, delay, noise, conductor, timer;
-
-// ---------- network ----------
-fetch('/api/room').then((r) => r.json()).then(({ room, qr }) => {
-  $('qr').innerHTML = qr; $('code').textContent = room;
-  ws = new WebSocket(`ws://${location.host}/ws?room=${room}&as=host`);
-  ws.onopen = () => ($('go').disabled = false);
-  ws.onmessage = (e) => {
-    const d = JSON.parse(e.data);
-    if (d.t === 'join' || d.t === 'leave') { counts[d.role] += d.t === 'join' ? 1 : -1; $('count').textContent = Object.values(counts).reduce((a, b) => a + b); boxes[d.role].firstChild.textContent = counts[d.role]; }
-    if (d.t === 'in' && conductor) conductor.input(d.id, d.role, d.x, d.y, performance.now() / 1000);
-  };
-});
-
-// ---------- synth ----------
-function setup() {
-  ctx = new AudioContext(); const comp = ctx.createDynamicsCompressor();
-  master = ctx.createGain(); master.gain.value = 0.8; master.connect(comp); comp.connect(ctx.destination);
-  delay = ctx.createDelay(); delay.delayTime.value = STEP * 3; // dotted-8th echo = instant "produced" sound
-  const fb = ctx.createGain(), wet = ctx.createGain(); fb.gain.value = 0.35; wet.gain.value = 0.3;
-  delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(master);
-  noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
-  const d = noise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-}
-const mtof = (m) => 440 * 2 ** ((m - 69) / 12);
-function voice(type, m, t, dur, vel, o) {
-  const osc = ctx.createOscillator(), g = ctx.createGain(), f = ctx.createBiquadFilter();
-  osc.type = type; osc.frequency.value = mtof(m); osc.detune.value = o.det || 0;
-  f.type = 'lowpass'; f.frequency.value = o.cut;
-  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vel * o.gain, t + o.a); g.gain.setTargetAtTime(0, t + dur, o.r);
-  osc.connect(f); f.connect(g); g.connect(master); if (o.send) g.connect(delay);
-  osc.start(t); osc.stop(t + dur + o.r * 8);
-}
-function drum(kind, t, vel) {
-  const g = ctx.createGain(); g.connect(master);
-  if (kind === 'kick') {
-    const o = ctx.createOscillator(); o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
-    g.gain.setValueAtTime(vel, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.3); o.connect(g); o.start(t); o.stop(t + 0.3);
-  } else {
-    const n = ctx.createBufferSource(), f = ctx.createBiquadFilter(); n.buffer = noise;
-    f.type = kind === 'hat' ? 'highpass' : 'bandpass'; f.frequency.value = kind === 'hat' ? 7000 : 1800;
-    const len = kind === 'hat' ? 0.05 : 0.18; g.gain.setValueAtTime(vel * (kind === 'hat' ? 0.5 : 0.8), t); g.gain.exponentialRampToValueAtTime(0.001, t + len);
-    n.connect(f); f.connect(g); n.start(t); n.stop(t + len);
-  }
-}
-function play(events, t) {
-  for (const e of events) {
-    const d = e.dur * STEP;
-    if (e.role === 'lead') voice('sawtooth', e.notes[0], t, d, e.vel, { a: 0.01, r: 0.12, cut: 2600, gain: 0.22, send: 1 });
-    else if (e.role === 'bass') voice('triangle', e.notes[0], t, d, e.vel, { a: 0.01, r: 0.1, cut: 600, gain: 0.55 });
-    else if (e.role === 'arp') voice('square', e.notes[0], t, d, e.vel, { a: 0.005, r: 0.08, cut: 2200, gain: 0.1, send: 1 });
-    else if (e.role === 'pad') e.notes.forEach((m) => [-8, 8].forEach((det) => voice('sawtooth', m, t, d, e.vel, { a: 0.25, r: 0.4, cut: 1100, gain: 0.05, det })));
-    else if (e.role === 'drums') drum(e.drum, t, e.vel);
-    const b = boxes[e.role]; b.classList.add('hit'); setTimeout(() => b.classList.remove('hit'), 90);
-  }
-}
-
-// ---------- scheduler (look-ahead on the audio clock; the step grid is the shared tempo for everyone) ----------
-const SECTIONS = ['Intro', 'Groove', 'Peak', 'Finale'];
-function run(source, total, onEnd) {
-  let n = 0, next = ctx.currentTime + 0.25;
-  clearInterval(timer);
-  timer = setInterval(() => {
-    while (next < ctx.currentTime + 0.15) {
-      if (n >= total) { clearInterval(timer); setTimeout(onEnd, 5000); return; }
-      play(source(n), next);
-      const bar = Math.floor(n / 16); $('sec').textContent = SECTIONS[conductor.section(bar)] + ' - bar ' + (bar + 1) + '/' + conductor.bars;
-      $('bar').firstChild.style.width = (100 * n / total) + '%';
-      n++; next += STEP;
-    }
-  }, 25);
-}
-const send = (v) => ws.send(JSON.stringify({ t: 'phase', v }));
-
-$('go').onclick = () => {
-  if (!ctx) setup(); ctx.resume();
-  conductor = new Music.Conductor({ bars: 40 });
-  $('go').hidden = true; $('again').hidden = true; send('play');
-  run((n) => conductor.step(n), conductor.steps, () => { send('done'); $('sec').textContent = 'Done!'; $('again').hidden = false; $('go').hidden = false; $('go').textContent = 'New jam'; });
-};
-$('again').onclick = () => { // replay exactly what the crowd made
-  const byStep = new Map(conductor.log.map((l) => [l.n, l.ev]));
-  run((n) => byStep.get(n) || [], conductor.steps, () => ($('sec').textContent = 'Done!'));
-};
-</script>
+  :root { color-scheme: dark; --bg:#0b0d14; --card:#151925; --ink:#f2f4fa; --dim:#8d94ab; --acc:#7c5cff; --ok:#2ecc8f; --warn:#ffb020; }
+  * { box-sizing: border-box; } body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.4 system-ui,sans-serif; }
+  header { padding:14px 20px; display:flex; gap:12px; align-items:center; border-bottom:1px solid #222838; } header b { font-size:20px; letter-spacing:.08em; }
+  #audio { margin-left:auto; padding:6px 12px; border-radius:20px; border:0; font:inherit; cursor:pointer; background:#3a2a10; color:var(--warn); } #audio.on { background:#10331f; color:var(--ok); cursor:default; }
+  main { max-width:1100px; margin:0 auto; padding:20px; display:grid; gap:16px; } .card { background:var(--card); border-radius:16px; padding:18px; }
+  .lobby { display:grid; grid-template-columns:minmax(240px,340px) 1fr; gap:24px; align-items:start; } @media(max-width:760px){ .lobby{grid-template-columns:1fr} }
+  #qr svg { width:100%; height:auto; background:#fff; border-radius:12px; display:block; } #qr:empty { aspect-ratio:1; background:#1d2233; border-radius:12px; }
+  .big { font-size:34px; font-weight:700; letter-spacing:.12em; } .dim { color:var(--dim); } code { background:#0d1018; padding:2px 6px; border-radius:6px; word-break:break-all; }
+  button.b, select { font:inherit; padding:12px 20px; border-radius:10px; border:0; background:var(--acc); color:#fff; cursor:pointer; margin:4px 8px 4px 0; } button.b.alt { background:#2a3047; } button.b:disabled { opacity:.4; cursor:default; }
+  select { background:#2a3047; } .hidden { display:none !important; }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:12px; } .stat { background:#0f1320; border-radius:12px; padding:12px; } .stat b { display:block; font-size:28px; } .stat span { color:var(--dim); font-size:13px; }
+  .rounds { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; } .rd { padding:10px; text-align:center; border-radius:10px; background:#0f1320; color:var(--dim); } .rd.cur { background:var(--acc); color:#fff; font-weight:700; } .rd.done { color:var(--ok); }
+  .roles { display:grid; grid-template-columns:repeat(6,1fr); gap:8px; } .role { text-align:center; padding:8px 4px; border-radius:10px; font-size:13px; transition:transform .08s, filter .08s; filter:brightness(.7); } .role b { display:block; font-size:22px; } .role.hit { transform:scale(1.1); filter:brightness(1.4); }
+  #pulse { width:14px; height:14px; border-radius:50%; background:var(--ok); display:inline-block; vertical-align:middle; transition:transform .15s; }
+  #feed { font:13px/1.5 ui-monospace,monospace; color:var(--dim); max-height:150px; overflow:hidden; } #warn { background:#3a2a10; color:var(--warn); border-radius:12px; padding:12px; font-size:14px; }
+  input[type=range] { width:160px; vertical-align:middle; } progress { width:100%; height:8px; }
+</style></head><body>
+<header><b>CROWDSYNTH</b><span class="dim" id="net">offline</span><button id="audio">Tap to enable sound</button></header>
+<main>
+  <section class="card lobby" id="lobby">
+    <div id="qr"></div>
+    <div>
+      <div class="dim">Scan with a phone camera to join</div>
+      <div class="big" id="code">----</div>
+      <p>Or open <code id="url">create a session first</code></p>
+      <p class="dim"><span id="count">0</span> participants connected <span id="pulse"></span></p>
+      <p><label class="dim">Mood <select id="preset"><option>RADIANT</option><option>CINEMATIC</option><option>PLAYFUL</option></select></label>
+         <label class="dim hidden" id="addrWrap">Address <select id="addr"></select></label></p>
+      <button class="b" id="create">Create session</button>
+      <button class="b" id="start" disabled>Start</button>
+      <p class="dim" id="hint">Start works with zero phones too: the engine plays an autonomous demo.</p>
+      <div id="warn" class="hidden"></div>
+    </div>
+  </section>
+  <section class="card hidden" id="live">
+    <div class="rounds" id="rounds"></div><br>
+    <div class="stats">
+      <div class="stat"><b id="sTempo">-</b><span>tempo</span></div><div class="stat"><b id="sKey">-</b><span>key</span></div>
+      <div class="stat"><b id="sChord">-</b><span>chord</span></div><div class="stat"><b id="sBar">-</b><span>bar / beat</span></div>
+      <div class="stat"><b id="sPeople">0</b><span>participants</span></div><div class="stat"><b id="sEvents">0</b><span>events played</span></div>
+    </div><br>
+    <div class="roles" id="roles"></div><br>
+    <div class="dim">Crowd energy</div><progress id="energy" max="1" value="0"></progress><br><br>
+    <button class="b alt" id="pause">Pause</button><button class="b alt" id="resume">Resume</button><button class="b alt" id="next">Next round</button><button class="b" id="end">End &amp; export</button>
+    <label class="dim">Volume <input type="range" id="vol" min="0" max="1" step="0.01" value="0.7"></label>
+    <div id="status" class="dim"></div><div id="feed"></div>
+  </section>
+  <section class="card hidden" id="export">
+    <h2 id="exTitle">Rendering your composition...</h2><p class="dim" id="exMeta"></p>
+    <audio id="player" controls class="hidden" style="width:100%"></audio>
+    <p><a class="b" id="dl" style="display:none;padding:12px 20px;background:#7c5cff;color:#fff;border-radius:10px;text-decoration:none">Save WAV</a></p>
+  </section>
+</main>
+<script src="/wav.js"></script><script src="/audio.js"></script><script src="/host.js"></script>
+</body></html>
